@@ -21,24 +21,66 @@ import { isNullish, sha3 } from 'web3-utils';
 import { isHexStrict } from 'web3-validator';
 import { Address, PayableCallOptions } from 'web3-types';
 import { PublicResolverAbi } from './abi/ens/PublicResolver.js';
-import { interfaceIds, methodsInInterface } from './config.js';
+import { interfaceIds, methodsInInterface, resolverCacheDefaults } from './config.js';
 import { Registry } from './registry.js';
 import { namehash } from './utils.js';
-
+import { CacheEntry } from './types.js';
 
 //  Default public resolver
 //  https://github.com/ensdomains/resolvers/blob/master/contracts/PublicResolver.sol
 
 export class Resolver {
 	private readonly registry: Registry;
+	private readonly cache: Map<string, CacheEntry>;
+	private readonly cacheEnabled: boolean;
 
-	public constructor(registry: Registry) {
+	public constructor(registry: Registry, cacheEnabled = true) {
 		this.registry = registry;
+		this.cache = new Map<string, CacheEntry>();
+		this.cacheEnabled = cacheEnabled;
 	}
 
 	private async getResolverContractAdapter(ENSName: string) {
-		//  TODO : (Future 4.1.0 TDB) cache resolver contract if frequently queried same ENS name, refresh cache based on TTL and usage, also limit cache size, optional cache with a flag
-		return this.registry.getResolver(ENSName);
+		if (this.cacheEnabled) {
+			const now = Date.now();
+			const cacheEntry = this.cache.get(ENSName);
+
+			if (cacheEntry && now - cacheEntry.timestamp < resolverCacheDefaults.ttl) {
+				cacheEntry.usageCount += 1;
+				return cacheEntry.contract;
+			}
+		}
+
+		const resolverContract = await this.registry.getResolver(ENSName);
+
+		if (this.cacheEnabled) {
+			if (this.cache.size >= resolverCacheDefaults.maxSize) {
+				this.evictLeastUsedCacheEntry();
+			}
+			this.cache.set(ENSName, {
+				contract: resolverContract,
+				timestamp: Date.now(),
+				usageCount: 1,
+			});
+		}
+
+		return resolverContract;
+	}
+
+	private evictLeastUsedCacheEntry() {
+		let leastUsedKey: string | undefined;
+		let minUsage = Infinity;
+
+		for (const [key, entry] of this.cache.entries()) {
+			if (entry.usageCount < minUsage) {
+				minUsage = entry.usageCount;
+				leastUsedKey = key;
+			}
+		}
+
+		if (leastUsedKey) {
+			this.cache.delete(leastUsedKey);
+		}
 	}
 
 	//  https://eips.ethereum.org/EIPS/eip-165
@@ -105,42 +147,28 @@ export class Resolver {
 		return resolverContract.methods.contenthash(namehash(ENSName)).call();
 	}
 
-	public async setAddress(
-		ENSName: string,
-		address: Address,
-		txConfig: PayableCallOptions,
-	) {
+	public async setAddress(ENSName: string, address: Address, txConfig: PayableCallOptions) {
 		const resolverContract = await this.getResolverContractAdapter(ENSName);
 		await this.checkInterfaceSupport(resolverContract, methodsInInterface.setAddr);
 
-		return resolverContract.methods
-			.setAddr(namehash(ENSName), address)
-			.send(txConfig);
+		return resolverContract.methods.setAddr(namehash(ENSName), address).send(txConfig);
 	}
 
-	public async getText(
-		ENSName: string,
-		key: string,
-	) {
+	public async getText(ENSName: string, key: string) {
 		const resolverContract = await this.getResolverContractAdapter(ENSName);
 		await this.checkInterfaceSupport(resolverContract, methodsInInterface.text);
 
-		return resolverContract.methods
-			.text(namehash(ENSName), key).call()
+		return resolverContract.methods.text(namehash(ENSName), key).call();
 	}
 
-	public async getName(
-		address: string,
-		checkInterfaceSupport = true
-	) {
+	public async getName(address: string, checkInterfaceSupport = true) {
 		const reverseName = `${address.toLowerCase().substring(2)}.addr.reverse`;
 
 		const resolverContract = await this.getResolverContractAdapter(reverseName);
-		
-		if(checkInterfaceSupport)
+
+		if (checkInterfaceSupport)
 			await this.checkInterfaceSupport(resolverContract, methodsInInterface.name);
-		
-		return resolverContract.methods
-			.name(namehash(reverseName)).call()
+
+		return resolverContract.methods.name(namehash(reverseName)).call();
 	}
 }

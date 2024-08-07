@@ -54,3 +54,8 @@ export const networkIds: { [T: string]: string } = {
 	'0x1': 'main',
 	'0x5': 'goerli',
 };
+
+export const resolverCacheDefaults: { [T: string]: number } = {
+	ttl: 10 * 60 * 1000,
+	maxSize: 100,
+};
