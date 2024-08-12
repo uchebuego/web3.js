@@ -2649,3 +2649,15 @@ If there are any bugs, improvements, optimizations or any new feature proposal f
 -   Remove redundant constructor of contractBuilder (#7150)
 
 ## [Unreleased]
+
+### Fixed
+
+#### web3-utils
+
+-   Fixed format schema with `oneOf` doesn't work correctly (#7055)
+
+### Added
+
+#### web3-eth-accounts
+
+-   Added public function `signMessageWithPrivateKey` (#7174)
